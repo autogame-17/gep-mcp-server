@@ -130,10 +130,45 @@ export class GepRuntime {
     };
   }
 
+  _normalizeQuery(query) {
+    if (!query) return '';
+
+    const text = String(query);
+
+    // Extract keywords: error codes, file paths, function names
+    const keywords = [];
+    const patterns = [
+      /error[:\s]+([A-Z0-9_]+)/g, // ERROR_CODE
+      /at\s+(\w+\.\w+)/g,         // function.method
+      /\/[\w/.-]+\.\w+/g,         // file paths
+    ];
+
+    for (const pat of patterns) {
+      let m;
+      while ((m = pat.exec(text)) !== null) {
+        keywords.push(m[1] || m[0]);
+      }
+    }
+
+    // Truncate to 300 chars: keep first 150 + last 150, with keywords in the middle
+    if (text.length > 300) {
+      const before = text.slice(0, 150);
+      const after = text.slice(-150);
+      const middle = keywords.slice(0, 3).join(' ');
+      return `${before}\n[keys: ${middle}]\n${after}`;
+    }
+
+    return text;
+  }
+
   recall(args) {
     const { query, signals, limit, budget_tokens, budget_usd, cost_tier } = args || {};
+
+    // Normalize query before signal extraction and Hub communication
+    const normalizedQuery = this._normalizeQuery(query);
+
     const events = this._readGraphEvents(500);
-    const querySignals = signals || this._extractSignals(query);
+    const querySignals = signals || this._extractSignals(normalizedQuery);
     const queryKey = this._computeSignalKey(querySignals);
     const effectiveLimit = Math.min(Math.max(1, parseInt(limit, 10) || 10), 50);
     const budget = resolveBudgetCaps({ budget_tokens, budget_usd, cost_tier });
@@ -179,7 +214,7 @@ export class GepRuntime {
       : relevant.slice(0, effectiveLimit);
 
     return {
-      query,
+      query: normalizedQuery,
       signals_extracted: querySignals,
       matches,
       total_memory_events: events.length,
@@ -407,21 +442,60 @@ export class GepRuntime {
     };
   }
 
+  _stratifyContent(lines) {
+    const documentText = [];
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      // Skip lines that are comments or JSON/code structure
+      if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('*') ||
+          trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('}') ||
+          trimmed.startsWith(']')) {
+        continue;
+      }
+      documentText.push(line);
+    }
+
+    return documentText.join('\n');
+  }
+
+  _hasRealErrorSignal(documentText) {
+    // Detect true error signals only in non-code/non-comment context
+    const lower = documentText.toLowerCase();
+    // Check for actual error indicators (not JSON fields)
+    const hasErrorKeyword = /\b(error|exception|failed|crash|bug|fatal|threw|stack trace)\b/.test(lower);
+    const isJsonField = /"status"\s*:\s*"error"/.test(documentText) || /^\s*".*":\s*/.test(documentText);
+
+    return hasErrorKeyword && !isJsonField;
+  }
+
   _extractSignals(context) {
     const signals = [];
     const text = String(context || '');
     const lower = text.toLowerCase();
+    const lines = text.split('\n');
+    const documentText = this._stratifyContent(lines);
 
-    if (/\[error\]|error:|exception:|"status":\s*"error"/.test(lower)) signals.push('log_error');
+    // log_error: only in non-code/non-comment context
+    if (this._hasRealErrorSignal(documentText)) signals.push('log_error');
+
+    // user_feature_request: check both formatted and direct expressions
     if (/\b(add|implement|create|build)\b[^.]{3,60}\b(feature|function|module|capability)\b/i.test(text)) {
       signals.push('user_feature_request');
     }
     if (/\b(i want|i need|we need|please add)\b/i.test(lower)) signals.push('user_feature_request');
+
+    // user_improvement_suggestion (but not if error already detected)
     if (/\b(improve|enhance|upgrade|refactor|optimize)\b/i.test(lower) && !signals.includes('log_error')) {
       signals.push('user_improvement_suggestion');
     }
+
+    // perf_bottleneck
     if (/\b(slow|timeout|latency|bottleneck|performance)\b/i.test(lower)) signals.push('perf_bottleneck');
+
+    // capability_gap
     if (/\b(not supported|cannot|unsupported|missing feature)\b/i.test(lower)) signals.push('capability_gap');
+
     if (signals.length === 0) signals.push('stable_success_plateau');
     return [...new Set(signals)];
   }
