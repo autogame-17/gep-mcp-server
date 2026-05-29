@@ -136,6 +136,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'string',
             description: 'Specific description of what happened: "Fixed X by doing Y" (required for useful recall)',
           },
+          used_asset_ids: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional. The asset_id(s) you actually used from a prior gep_recall/fetch to reach this outcome. Lets the network measure which recalled assets truly help. Omit if none.',
+          },
         },
         required: ['geneId', 'signals', 'status', 'score', 'summary'],
       },

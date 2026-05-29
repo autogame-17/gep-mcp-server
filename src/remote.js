@@ -229,7 +229,7 @@ export class RemoteRuntime {
   }
 
   async recordOutcome(args) {
-    const { geneId, signals, status, score, summary } = args || {};
+    const { geneId, signals, status, score, summary, used_asset_ids } = args || {};
     return this._request('POST', '/a2a/memory/record', {
       node_id: this.nodeId,
       signals,
@@ -237,6 +237,11 @@ export class RemoteRuntime {
       status,
       score,
       summary,
+      // Optional fetch->outcome attribution; omitted when the agent passes none
+      // so older agents and non-attributed calls are byte-identical.
+      ...(Array.isArray(used_asset_ids) && used_asset_ids.length > 0
+        ? { used_asset_ids }
+        : {}),
     });
   }
 
