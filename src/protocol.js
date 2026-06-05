@@ -27,12 +27,21 @@
 
 import {
   SCHEMA_VERSION,
+  GEP_GENE_CATEGORIES,
+  GEP_OUTCOME_STATUSES,
   canonicalize,
   computeAssetId,
   verifyAssetId,
 } from '@evomap/gep-sdk';
 
-export { SCHEMA_VERSION, canonicalize, computeAssetId, verifyAssetId };
+export {
+  SCHEMA_VERSION,
+  GEP_GENE_CATEGORIES,
+  GEP_OUTCOME_STATUSES,
+  canonicalize,
+  computeAssetId,
+  verifyAssetId,
+};
 
 export const PROTOCOL_NAME = 'gep-a2a';
 export const PROTOCOL_VERSION = '1.0.0';
@@ -90,8 +99,8 @@ export function validateGene(gene) {
   }
   if (gene.type !== 'Gene') errors.push('gene.type must be "Gene"');
   if (!gene.id || typeof gene.id !== 'string') errors.push('gene.id is required');
-  if (!gene.category || !['repair', 'optimize', 'innovate'].includes(gene.category)) {
-    errors.push('gene.category must be repair|optimize|innovate');
+  if (!gene.category || !GEP_GENE_CATEGORIES.includes(gene.category)) {
+    errors.push(`gene.category must be ${GEP_GENE_CATEGORIES.join('|')}`);
   }
   if (!Array.isArray(gene.signals_match) || gene.signals_match.length === 0) {
     errors.push('gene.signals_match must be a non-empty array');
@@ -154,11 +163,25 @@ export function validateCapsule(capsule) {
   if (!capsule.outcome || typeof capsule.outcome !== 'object') {
     errors.push('capsule.outcome must be an object with at least { status: "success"|"failed" }');
   } else {
-    if (!capsule.outcome.status || !['success', 'failed'].includes(capsule.outcome.status)) {
-      errors.push('capsule.outcome.status must be "success" or "failed"');
+    if (!capsule.outcome.status || !GEP_OUTCOME_STATUSES.includes(capsule.outcome.status)) {
+      errors.push(`capsule.outcome.status must be ${GEP_OUTCOME_STATUSES.map((s) => `"${s}"`).join(' or ')}`);
     }
     if (capsule.outcome.score !== undefined && (!isFiniteNumber(capsule.outcome.score) || capsule.outcome.score < 0 || capsule.outcome.score > 1)) {
       errors.push('capsule.outcome.score, when present, must be a number in [0, 1]');
+    }
+  }
+  // Schema 1.7.0: optional cost hints. Both fields are nullable so a
+  // recorder that does not have a cost estimate can explicitly say
+  // "unknown" instead of omitting the field. `cost_tokens` is an
+  // integer count (>= 0); `cost_usd` is a non-negative finite number.
+  if (capsule.cost_tokens !== undefined && capsule.cost_tokens !== null) {
+    if (!isFiniteNumber(capsule.cost_tokens) || capsule.cost_tokens < 0 || !Number.isInteger(capsule.cost_tokens)) {
+      errors.push('capsule.cost_tokens, when present, must be a non-negative integer or null');
+    }
+  }
+  if (capsule.cost_usd !== undefined && capsule.cost_usd !== null) {
+    if (!isFiniteNumber(capsule.cost_usd) || capsule.cost_usd < 0) {
+      errors.push('capsule.cost_usd, when present, must be a non-negative number or null');
     }
   }
   // Substance gate: the Hub rejects capsules that have only metadata. At

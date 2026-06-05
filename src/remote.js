@@ -218,31 +218,45 @@ export class RemoteRuntime {
   }
 
   async recall(args) {
-    const { query, signals, limit } = args || {};
+    const {
+      query, signals, limit,
+      budget_tokens, budget_usd, cost_tier,
+    } = args || {};
     const effectiveLimit = Math.min(Math.max(1, parseInt(limit, 10) || 10), 50);
-    return this._request('POST', '/a2a/memory/recall', {
+    // Schema 1.7.0: forward budget hints to the Hub so it can down-rank
+    // expensive matches server-side. Older Hubs ignore unknown JSON
+    // fields, so this is forward-compatible.
+    const body = {
       node_id: this.nodeId,
       query,
       signals,
       limit: effectiveLimit,
-    });
+    };
+    if (budget_tokens !== undefined && budget_tokens !== null) body.budget_tokens = budget_tokens;
+    if (budget_usd !== undefined && budget_usd !== null) body.budget_usd = budget_usd;
+    if (cost_tier !== undefined && cost_tier !== null) body.cost_tier = cost_tier;
+    return this._request('POST', '/a2a/memory/recall', body);
   }
 
   async recordOutcome(args) {
-    const { geneId, signals, status, score, summary, used_asset_ids } = args || {};
-    return this._request('POST', '/a2a/memory/record', {
+    const { geneId, signals, status, score, summary, cost_tokens, cost_usd, used_asset_ids } = args || {};
+    // Schema 1.7.0: forward cost hints to the Hub. Older Hubs ignore
+    // unknown fields; newer Hubs persist them onto the capsule so a
+    // future budget-aware recall can rank by cost.
+    const body = {
       node_id: this.nodeId,
       signals,
       gene_id: geneId,
       status,
       score,
       summary,
-      // Optional fetch->outcome attribution; omitted when the agent passes none
-      // so older agents and non-attributed calls are byte-identical.
-      ...(Array.isArray(used_asset_ids) && used_asset_ids.length > 0
-        ? { used_asset_ids }
-        : {}),
-    });
+    };
+    if (cost_tokens !== undefined && cost_tokens !== null) body.cost_tokens = cost_tokens;
+    if (cost_usd !== undefined && cost_usd !== null) body.cost_usd = cost_usd;
+    // Optional fetch->outcome attribution; omitted when the agent passes none
+    // so older agents and non-attributed calls are byte-identical.
+    if (Array.isArray(used_asset_ids) && used_asset_ids.length > 0) body.used_asset_ids = used_asset_ids;
+    return this._request('POST', '/a2a/memory/record', body);
   }
 
   async getStatus() {

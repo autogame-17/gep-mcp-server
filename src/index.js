@@ -26,6 +26,10 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import {
+  GEP_GENE_CATEGORIES,
+  GEP_OUTCOME_STATUSES,
+} from '@evomap/gep-sdk';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const requireFromHere = createRequire(import.meta.url);
@@ -78,7 +82,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           intent: {
             type: 'string',
-            enum: ['repair', 'optimize', 'innovate'],
+            enum: GEP_GENE_CATEGORIES,
             description: 'Optional: force a specific evolution intent. If omitted, the system infers from signals.',
           },
         },
@@ -87,7 +91,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'gep_recall',
-      description: 'Query the evolution memory graph for relevant past experience. Returns historical signal-gene-outcome mappings that match the query. Use this to check if you have dealt with a similar situation before.',
+      description: 'Query the evolution memory graph for relevant past experience. Returns historical signal-gene-outcome mappings that match the query. Use this to check if you have dealt with a similar situation before. Schema 1.7.0 adds optional budget hints (budget_tokens / budget_usd / cost_tier) forwarded to the Hub so expensive matches get down-ranked server-side; matches that exceed the budget are still returned (top 1-2) but flagged with `over_budget: true` so the caller can decide. The response field `budget_applied` is null when no budget was supplied; when a budget is active it is `{ budget_tokens, budget_usd, tokens_unbounded, usd_unbounded, cost_tier }` -- a `null` in `budget_tokens`/`budget_usd` paired with the matching `*_unbounded: true` flag means "no cap on this dimension" (vs "caller passed nothing", which yields `budget_applied: null`).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -104,13 +108,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'number',
             description: 'Max results to return (default 10, max 50)',
           },
+          budget_tokens: {
+            type: 'integer',
+            minimum: 0,
+            description: 'Optional (schema 1.7.0): forwarded to Hub as a ranking hint so expensive matches can be down-ranked or dropped server-side. Capsules without cost_tokens metadata survive filtering (treated as cost=unknown).',
+          },
+          budget_usd: {
+            type: 'number',
+            minimum: 0,
+            description: 'Optional (schema 1.7.0): forwarded to Hub as a ranking hint. Capsules without cost_usd metadata survive filtering (treated as cost=unknown).',
+          },
+          cost_tier: {
+            type: 'string',
+            enum: ['low', 'medium', 'high'],
+            description: 'Optional (schema 1.7.0): qualitative budget tier. low=<5000 tokens / <$0.05; medium=<50000 / <$0.50; high=no cap. Applied only if budget_tokens / budget_usd are not given explicitly.',
+          },
         },
         required: ['query'],
       },
     },
     {
       name: 'gep_record_outcome',
-      description: 'Record the outcome of a task. Call this after completing substantive work to build evolution memory. The summary must describe both the problem and the solution.',
+      description: 'Record the outcome of a task. Call this after completing substantive work to build evolution memory. The summary must describe both the problem and the solution. Schema 1.7.0 adds optional `cost_tokens` / `cost_usd` hints so future budget-aware recall can rank by cost; both default to null and never block the record.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -125,7 +144,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           status: {
             type: 'string',
-            enum: ['success', 'failed'],
+            enum: GEP_OUTCOME_STATUSES,
             description: 'Whether the task was successful',
           },
           score: {
@@ -135,6 +154,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           summary: {
             type: 'string',
             description: 'Specific description of what happened: "Fixed X by doing Y" (required for useful recall)',
+          },
+          cost_tokens: {
+            type: 'integer',
+            minimum: 0,
+            description: 'Optional (schema 1.7.0): approximate total tokens this task burned. Recommended for substantive tasks so a future budget-aware recall can rank by cost. Omit / null when unknown.',
+          },
+          cost_usd: {
+            type: 'number',
+            minimum: 0,
+            description: 'Optional (schema 1.7.0): approximate USD cost this task burned. Same purpose as cost_tokens but for dollar-budget callers. Omit / null when unknown.',
           },
           used_asset_ids: {
             type: 'array',
@@ -153,7 +182,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           category: {
             type: 'string',
-            enum: ['repair', 'optimize', 'innovate'],
+            enum: GEP_GENE_CATEGORIES,
             description: 'Optional: filter by category',
           },
         },
@@ -270,7 +299,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           outcome: {
             type: 'string',
-            enum: ['success', 'failed'],
+            enum: GEP_OUTCOME_STATUSES,
             description: 'Optional: filter by outcome status',
           },
           limit: {
@@ -452,7 +481,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const params = new URLSearchParams();
           params.set('q', args.query.trim().slice(0, 500));
           if (args.type && ['Gene', 'Capsule'].includes(args.type)) params.set('type', args.type);
-          if (args.outcome && ['success', 'failed'].includes(args.outcome)) params.set('outcome', args.outcome);
+          if (args.outcome && GEP_OUTCOME_STATUSES.includes(args.outcome)) params.set('outcome', args.outcome);
           params.set('limit', String(Math.min(Math.max(1, parseInt(args.limit, 10) || 10), 50)));
           params.set('include_context', 'true');
           const url = `${HUB_URL}/a2a/assets/semantic-search?${params.toString()}`;

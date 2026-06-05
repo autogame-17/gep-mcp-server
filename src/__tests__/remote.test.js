@@ -116,6 +116,47 @@ describe('RemoteRuntime._request retry logic', () => {
   });
 });
 
+describe('RemoteRuntime.recall budget hint forwarding', () => {
+  it('forwards budget_tokens / budget_usd / cost_tier to the Hub body', async () => {
+    let captured;
+    const fetchImpl = vi.fn(async (_url, opts) => {
+      captured = JSON.parse(opts.body);
+      return buildResponse({ ok: true, status: 200, body: { matches: [] } });
+    });
+    const runtime = buildRuntime({ fetchImpl });
+    await runtime.recall({
+      query: 'x',
+      budget_tokens: 1000,
+      budget_usd: 0.5,
+      cost_tier: 'low',
+    });
+    expect(captured.budget_tokens).toBe(1000);
+    expect(captured.budget_usd).toBe(0.5);
+    expect(captured.cost_tier).toBe('low');
+  });
+
+  it('omits budget fields when not supplied', async () => {
+    let captured;
+    const fetchImpl = vi.fn(async (_url, opts) => {
+      captured = JSON.parse(opts.body);
+      return buildResponse({ ok: true, status: 200, body: { matches: [] } });
+    });
+    const runtime = buildRuntime({ fetchImpl });
+    await runtime.recall({ query: 'x' });
+    expect(captured.budget_tokens).toBeUndefined();
+    expect(captured.budget_usd).toBeUndefined();
+    expect(captured.cost_tier).toBeUndefined();
+  });
+
+  it('returns the Hub response unchanged', async () => {
+    const body = { matches: [{ gene_id: 'a', cost_tokens: 99999 }], extra: 'pass-through' };
+    const fetchImpl = vi.fn(async () => buildResponse({ ok: true, status: 200, body }));
+    const runtime = buildRuntime({ fetchImpl });
+    const result = await runtime.recall({ query: 'x' });
+    expect(result).toEqual(body);
+  });
+});
+
 describe('RemoteRuntime.recordOutcome attribution passthrough', () => {
   function capturingRuntime() {
     const calls = [];
